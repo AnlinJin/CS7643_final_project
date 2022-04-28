@@ -29,9 +29,9 @@ class ImageDataTransform:
         if mode == "train":
             self.transforms = transforms.Compose([
                 transforms.RandomResizedCrop(height, scale=(0.2, 1.0)),
-                #transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),  # not strengthened
+                transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),  # not strengthened
                 transforms.RandomGrayscale(p=0.2),
-                #transforms.RandomApply([GaussianBlur([0.1, 2.0])], p=0.5),
+                transforms.RandomApply([GaussianBlur([0.1, 2.0])], p=0.5),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 cifar10_normalization(),
