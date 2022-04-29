@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,7 +17,6 @@ from pl_bolts.datamodules import CIFAR10DataModule
 from pl_bolts.datamodules.imagenet_datamodule import ImagenetDataModule
 from pl_bolts.transforms.dataset_normalizations import cifar10_normalization, imagenet_normalization
 from pl_bolts.models.self_supervised import SimCLR
-from pl_bolts.models.self_supervised.resnets import resnet50
 from pl_bolts.models.self_supervised.moco.transforms import GaussianBlur
 
 class ImageDataTransform:
@@ -93,12 +93,11 @@ class SimCLR_finetuned(nn.Module):
 
     def __init__(self, num_classes=10, pretrained_model=None):
         super(SimCLR_finetuned, self).__init__()
-        if type(pretrained_model) != None:
+        if pretrained_model:
             self.backbone = pretrained_model.encoder
             self.backbone.requires_grad_(False)
-
-        else: # train from scratch
-            self.backbone = resnet50
+        else: # just want to get encoder, parameters in SimCLR are not used
+            self.backbone = SimCLR(num_samples=40000, batch_size=256, dataset="cifar10", gpus=1).encoder
 
         self.linear_layer = nn.Sequential(
             nn.Linear(2048, num_classes),
@@ -131,7 +130,7 @@ def cifar10_pretrain(num_epochs=300, batch_size=256):
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 # 2nd Stage
-def cifar10_finetune(weight_path, num_epochs=100, batch_size=64):
+def cifar10_finetune(weight_path=None, num_epochs=100, batch_size=64, log_file="./log_finetune"):
     """
     Hyper-parameters should be fixed across different self-supervised models
     ref: https://pytorch-lightning-bolts.readthedocs.io/en/latest/self_supervised_models.html
@@ -140,9 +139,9 @@ def cifar10_finetune(weight_path, num_epochs=100, batch_size=64):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load pre-trained model
-    model = SimCLR.load_from_checkpoint(weight_path, strict=False)
+    model = SimCLR.load_from_checkpoint(weight_path, strict=False) if weight_path else None
     model = SimCLR_finetuned(pretrained_model=model).to(device)
-
+    
     # Data Loader
     train_set = CIFAR10Dataset(mode="train", transform=ImageDataTransform(mode="train", output_length=1))
     val_set = CIFAR10Dataset(mode="val", transform=ImageDataTransform(mode="val", output_length=1))
@@ -157,10 +156,12 @@ def cifar10_finetune(weight_path, num_epochs=100, batch_size=64):
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
     # Writer
-    writer = SummaryWriter("./log_finetune", flush_secs=30)
+    writer = SummaryWriter(log_file, flush_secs=30)
 
-    # Training
+    # Training + Validation
     # ref: https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
+    best_accuracy = 0.0
+    best_model_path = None
     for epoch in range(1, num_epochs+1):
 
         # Training
@@ -207,8 +208,41 @@ def cifar10_finetune(weight_path, num_epochs=100, batch_size=64):
         writer.add_scalar("Loss/validation", validation_loss, epoch)
         writer.add_scalar("Accuracy/validation", accuracy, epoch)
 
+        # Update (for test)
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+
+            print(f"deleting {best_model_path}")
+            if best_model_path:
+                os.remove(best_model_path)
+
+            best_model_path = os.path.join(log_file, f"best_ckpt_e{epoch}.pth")
+            print(f"saving {best_model_path}")
+            torch.save(model.state_dict(), best_model_path)
+
+    # Test
+    if not best_model_path:
+        return
+    best_model = SimCLR_finetuned().to(device)
+    best_model.load_state_dict(torch.load(best_model_path))
+
+    accuracy = 0.0
+    with torch.no_grad():
+        t = tqdm(test_loader)
+        t.set_description(f"Testing")
+
+        for i, (inputs, labels) in enumerate(t):
+            inputs, labels = inputs.to(device), labels.squeeze().to(device)
+            outputs = model(inputs)
+            predictions = outputs.argmax(dim=1, keepdim=True).squeeze()
+            correct_num = (predictions == labels).sum().item()
+            accuracy += correct_num / len(test_set)
+    
+    print(f"Test Accuracy: {accuracy}")
+
 if __name__ == "__main__":
 
-    cifar10_pretrain()
+    #cifar10_pretrain()
 
-    #cifar10_finetune("./results/lightning_logs/version_0/checkpoints/epoch=999-step=782000.ckpt")
+    #cifar10_finetune(weight_path="./lightning_logs/version_0/checkpoints/epoch=299-step=52800.ckpt")
+    cifar10_finetune(log_file="./log_baseline")
