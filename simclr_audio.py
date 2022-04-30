@@ -124,7 +124,7 @@ class SimCLR_finetuned(nn.Module):
         return out
 
 # 1st Stage
-def librispeech_pretrain(num_epochs=1, batch_size=64):
+def librispeech_pretrain(num_epochs=300, batch_size=64):
     """
     Self-supervised pretraining, will not use test set
     """
@@ -263,4 +263,4 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=64, log_fi
 
 if __name__ == "__main__":
 
-    pass
+    librispeech_pretrain()
