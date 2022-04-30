@@ -7,15 +7,12 @@ import torch_audiomentations
 import tensorflow as tf
 
 from sklearn.model_selection import train_test_split
-from tensorflow_datasets.image_classification import Imagenette
 from tqdm.contrib import tqdm
-from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from pytorch_lightning.trainer.trainer import Trainer
 from pl_bolts.models.self_supervised import SimCLR
-from pl_bolts.models.self_supervised.moco.transforms import GaussianBlur
 from pl_bolts.models.self_supervised.resnets import resnet50
 
 
