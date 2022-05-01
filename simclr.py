@@ -26,8 +26,13 @@ class ImageDataTransform:
     output_length parameter depends on what model to use
     """
 
-    def __init__(self, height=32, mode="train", output_length=3):
-        if mode == "train":
+    def __init__(self, height=32, mode="train", output_length=3, no_aug=False):
+        if no_aug:
+            self.transforms = transforms.Compose([
+                transforms.ToTensor(),
+                cifar10_normalization(),
+            ])
+        elif mode == "train":
             self.transforms = transforms.Compose([
                 transforms.RandomResizedCrop(height, scale=(0.2, 1.0)),
                 transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),  # not strengthened
@@ -37,7 +42,7 @@ class ImageDataTransform:
                 transforms.ToTensor(),
                 cifar10_normalization(),
             ])
-        else: # val or test
+        else: # val or test with aug
             self.transforms = transforms.Compose([
                 transforms.Resize(height + 12),
                 transforms.CenterCrop(height),
@@ -131,7 +136,7 @@ def cifar10_pretrain(num_epochs=300, batch_size=256):
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 # 2nd Stage
-def cifar10_finetune(weight_path=None, num_epochs=100, batch_size=64, log_file="./log_finetune", lr=0.001):
+def cifar10_finetune(weight_path=None, num_epochs=100, batch_size=64, no_aug=False, log_file="./log_finetune", lr=0.001):
     """
     Hyper-parameters should be fixed across different self-supervised models
     ref: https://pytorch-lightning-bolts.readthedocs.io/en/latest/self_supervised_models.html
@@ -144,9 +149,9 @@ def cifar10_finetune(weight_path=None, num_epochs=100, batch_size=64, log_file="
     model = SimCLR_finetuned(pretrained_model=model).to(device)
 
     # Data Loader
-    train_set = CIFAR10Dataset(mode="train", transform=ImageDataTransform(mode="train", output_length=1))
-    val_set = CIFAR10Dataset(mode="val", transform=ImageDataTransform(mode="val", output_length=1))
-    test_set = CIFAR10Dataset(mode="test", transform=ImageDataTransform(mode="test", output_length=1))
+    train_set = CIFAR10Dataset(mode="train", transform=ImageDataTransform(mode="train", output_length=1, no_aug=no_aug))
+    val_set = CIFAR10Dataset(mode="val", transform=ImageDataTransform(mode="val", output_length=1, no_aug=no_aug))
+    test_set = CIFAR10Dataset(mode="test", transform=ImageDataTransform(mode="test", output_length=1, no_aug=no_aug))
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
