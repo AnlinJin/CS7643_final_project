@@ -15,7 +15,6 @@ from pytorch_lightning.trainer.trainer import Trainer
 from pl_bolts.models.self_supervised import SimCLR
 from pl_bolts.models.self_supervised.resnets import resnet50
 
-
 class AudioDataTransform:
     """
     Transform used for DataLoader
@@ -58,8 +57,15 @@ class LibrispeechDataset(Dataset):
     """
     Create train/val/test split for Librispeech Dataset
     train: 2303, val: 200, test: 200, num_labels: 40
+    if gender_only, just predict gender instead of speaker id
     """
-    def __init__(self, mode="train", transform=None, path="./librispeech"):
+    def __init__(self, mode="train", transform=None, path="./librispeech", predict_sex_only=False):
+        # gender information according to SPEAKER.TXT
+        male_ids = {174, 251, 422, 652, 777, 1272, 2078, 2086, 2428, 2803, 2902, 
+                    3000, 3170, 3752, 5536, 5694, 6241, 6295, 7976, 8297}
+        female_ids = {84, 1462, 1673, 1919, 1988, 1993, 2035, 2277, 2412, 3081, 
+                    3536, 3576, 3853, 5338, 5895, 6313, 6319, 6345, 7850, 8842}
+
         # get data from path
         dataset = torchaudio.datasets.LIBRISPEECH("./librispeech", url="dev-clean", download=True)
         ids, ys = list(range(len(dataset))), [speaker_id for _, _, _, speaker_id, _, _ in dataset]
@@ -73,7 +79,12 @@ class LibrispeechDataset(Dataset):
         self.dataset = dataset
         self.transform = transform
         self.id_train, self.id_val, self.id_test = id_train, id_val, id_test
-        self.id_to_label = {y: i for i, y in enumerate(set(ys))} # for training indexing
+        
+        # for training indexing
+        self.id_to_label = {y: i for i, y in enumerate(set(ys))}
+        if predict_sex_only:
+            for k in self.id_to_label.keys():
+                self.id_to_label[k] = 0 if k in male_ids else 1
 
     def __len__(self):
         if self.mode == "train":
@@ -106,7 +117,7 @@ class SimCLR_finetuned(nn.Module):
     ref: https://github.com/PyTorchLightning/lightning-bolts/blob/master/pl_bolts/models/self_supervised/simclr/simclr_module.py#L42
     """
 
-    def __init__(self, hidden_dim=2048, num_classes=10, pretrained_model=None):
+    def __init__(self, hidden_dim=2048, num_classes=10, pretrained_model=None, predict_sex_only=False):
         super(SimCLR_finetuned, self).__init__()
         if pretrained_model:
             self.backbone = pretrained_model.encoder
@@ -147,7 +158,8 @@ def librispeech_pretrain(num_epochs=300, batch_size=64):
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 # 2nd Stage
-def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=1, no_aug=False, log_file="./log_finetune", lr=0.001):
+def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=1, no_aug=False, lr=0.001,
+                        log_file="./log_finetune", predict_sex_only=False):
     """
     Hyper-parameters should be fixed across different self-supervised models
     ref: https://pytorch-lightning-bolts.readthedocs.io/en/latest/self_supervised_models.html
@@ -166,12 +178,16 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=1, no_aug=
     else:
         model = None
 
-    model = SimCLR_finetuned(pretrained_model=model, num_classes=40).to(device)
+    num_classes = 2 if predict_sex_only else 40
+    model = SimCLR_finetuned(pretrained_model=model, num_classes=num_classes).to(device)
 
     # Data Loader
-    train_set = LibrispeechDataset(mode="train", transform=AudioDataTransform(mode="train", output_length=1, no_aug=no_aug))
-    val_set = LibrispeechDataset(mode="val", transform=AudioDataTransform(mode="val", output_length=1, no_aug=no_aug))
-    test_set = LibrispeechDataset(mode="test", transform=AudioDataTransform(mode="test", output_length=1, no_aug=no_aug))
+    train_set = LibrispeechDataset(mode="train", predict_sex_only=predict_sex_only,
+                    transform=AudioDataTransform(mode="train", output_length=1, no_aug=no_aug))
+    val_set = LibrispeechDataset(mode="val", predict_sex_only=predict_sex_only,
+                    transform=AudioDataTransform(mode="val", output_length=1, no_aug=no_aug))
+    test_set = LibrispeechDataset(mode="test", predict_sex_only=predict_sex_only,
+                    transform=AudioDataTransform(mode="test", output_length=1, no_aug=no_aug))
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
