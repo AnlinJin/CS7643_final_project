@@ -22,8 +22,13 @@ class AudioDataTransform:
     output_length parameter depends on what model to use
     """
 
-    def __init__(self, height=32, mode="train", output_length=3):
-        if mode == "train":
+    def __init__(self, height=32, mode="train", output_length=3, no_aug=False):
+        if no_aug:
+            self.transforms = transforms.Compose([
+                torchaudio.transforms.Spectrogram(normalized=True),
+                torchaudio.transforms.AmplitudeToDB(), # if not used, spectrogram becomes unreadable
+            ])
+        elif mode == "train":
             self.transforms = transforms.Compose([
                 torch_audiomentations.Gain(),
                 torch_audiomentations.PolarityInversion(),
@@ -32,7 +37,7 @@ class AudioDataTransform:
                 torchaudio.transforms.AmplitudeToDB(), # if not used, spectrogram becomes unreadable
                 torchvision.transforms.RandomCrop(size=(201, 116)), # minimum size
             ])
-        else: # val or test
+        else: # val or test with aug
             self.transforms = transforms.Compose([
                 torchaudio.transforms.Spectrogram(normalized=True),
                 torchaudio.transforms.AmplitudeToDB(), # if not used, spectrogram becomes unreadable
@@ -142,11 +147,14 @@ def librispeech_pretrain(num_epochs=300, batch_size=64):
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 # 2nd Stage
-def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=64, log_file="./log_finetune", lr=0.001):
+def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=1, no_aug=False, log_file="./log_finetune", lr=0.001):
     """
     Hyper-parameters should be fixed across different self-supervised models
     ref: https://pytorch-lightning-bolts.readthedocs.io/en/latest/self_supervised_models.html
     """
+
+    if no_aug and batch_size != 1:
+        raise RuntimeError("No augmentation (cropping) will cause size mismatch for dataloader")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -161,9 +169,9 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=64, log_fi
     model = SimCLR_finetuned(pretrained_model=model, num_classes=40).to(device)
 
     # Data Loader
-    train_set = LibrispeechDataset(mode="train", transform=AudioDataTransform(mode="train", output_length=1))
-    val_set = LibrispeechDataset(mode="val", transform=AudioDataTransform(mode="val", output_length=1))
-    test_set = LibrispeechDataset(mode="test", transform=AudioDataTransform(mode="test", output_length=1))
+    train_set = LibrispeechDataset(mode="train", transform=AudioDataTransform(mode="train", output_length=1, no_aug=no_aug))
+    val_set = LibrispeechDataset(mode="val", transform=AudioDataTransform(mode="val", output_length=1, no_aug=no_aug))
+    test_set = LibrispeechDataset(mode="test", transform=AudioDataTransform(mode="test", output_length=1, no_aug=no_aug))
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
@@ -188,11 +196,11 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=64, log_fi
             t.set_description(f"Train {epoch}")
 
             for i, (inputs, labels) in enumerate(t):
-                inputs, labels = inputs.to(device), labels.squeeze().to(device)
+                inputs, labels = inputs.to(device), labels.to(device)
 
                 # training
                 optimizer.zero_grad()
-                outputs = model(inputs)
+                outputs = ensemble_output(inputs, model)
 
                 loss = criterion(outputs, labels)
                 loss.backward()
@@ -210,11 +218,11 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=64, log_fi
             t.set_description(f"Valid {epoch}")
 
             for i, (inputs, labels) in enumerate(t):
-                inputs, labels = inputs.to(device), labels.squeeze().to(device)
+                inputs, labels = inputs.to(device), labels.to(device)
 
                 # training
                 optimizer.zero_grad()
-                outputs = model(inputs)
+                outputs = ensemble_output(inputs, model)
 
                 loss = criterion(outputs, labels)
                 validation_loss += loss.detach().cpu().numpy() / len(val_set)
@@ -250,14 +258,46 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=64, log_fi
         t.set_description(f"Testing")
 
         for i, (inputs, labels) in enumerate(t):
-            inputs, labels = inputs.to(device), labels.squeeze().to(device)
-            outputs = model(inputs)
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = ensemble_output(inputs, model)
             predictions = outputs.argmax(dim=1, keepdim=True).squeeze()
             correct_num = (predictions == labels).sum().item()
             accuracy += correct_num / len(test_set)
     
     print(f"Test Accuracy: {accuracy}")
 
+def ensemble_output(inputs, model, window_size=(201, 116), stride=50):
+    """
+    Used for tunetune.
+    Since image has different size, generating the output contains 2 stage:
+    1. use sliding window (fix size) to generate bunch of patches
+    2. model predict each patch score, and add together
+
+    :param inputs: should have size (batch, channel, frequency, time)
+    :param model: model to be trained/inferenced
+    :param window_size: sliding window with size (frequency, time)
+    :param stride: stride length of window across time axis, if insufficient then pad zeros
+    """
+
+    _, _, Fi, Ti = inputs.shape
+    Fw, Tw = window_size
+    assert Fi == Fw, "different number of frequency bins"
+    N_windows = int(np.ceil((Ti-Tw)/50)) + 1
+
+    outputs = []
+    for i in range(N_windows):
+        # sliding window
+        window = inputs[:,:,:,stride*i:stride*i+Tw]
+        if window.shape[-1] != Tw:
+            n_pad = Tw - window.shape[-1]
+            window = torch.nn.functional.pad(window, (0, n_pad), "constant", 0)
+
+        # ensemble
+        output = model(window)
+        outputs.append(output)
+        
+    return sum(outputs) / len(outputs)
+
 if __name__ == "__main__":
 
-    librispeech_pretrain()
+    pass
