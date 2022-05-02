@@ -275,7 +275,7 @@ def librispeech_finetune(weight_path=None, num_epochs=100, batch_size=1, no_aug=
 
         for i, (inputs, labels) in enumerate(t):
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = ensemble_output(inputs, model)
+            outputs = ensemble_output(inputs, best_model)
             predictions = outputs.argmax(dim=1, keepdim=True).squeeze()
             correct_num = (predictions == labels).sum().item()
             accuracy += correct_num / len(test_set)

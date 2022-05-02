@@ -239,7 +239,7 @@ def cifar10_finetune(weight_path=None, num_epochs=100, batch_size=64, no_aug=Fal
 
         for i, (inputs, labels) in enumerate(t):
             inputs, labels = inputs.to(device), labels.squeeze().to(device)
-            outputs = model(inputs)
+            outputs = best_model(inputs)
             predictions = outputs.argmax(dim=1, keepdim=True).squeeze()
             correct_num = (predictions == labels).sum().item()
             accuracy += correct_num / len(test_set)
