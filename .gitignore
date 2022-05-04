@@ -2,3 +2,5 @@ librispeech/
 *log*/
 *.wav
 *.ipynb
+
+.DS_Store
