@@ -130,6 +130,10 @@ class CIFAR10Dataset(Dataset):
         return image, label
 
 def moco_pretrain():
+    """
+    Model for MoCo pretrain
+    ref: https://github.com/PyTorchLightning/lightning-bolts/blob/master/pl_bolts/models/self_supervised/moco/moco2_module.py#L356
+    """
     # Data Loader
     parser = ArgumentParser()
 
